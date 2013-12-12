@@ -2,13 +2,16 @@
 instance of the server, and then run the listen() method to listen for client
 requests. Logging is performed via a standard logging object set in
 TftpShared."""
+from datetime import timedelta
 
 import socket, os, time
 import select
+import datetime
 from TftpShared import *
 from TftpPacketTypes import *
 from TftpPacketFactory import TftpPacketFactory
 from TftpContexts import TftpContextServer
+from TftpPacketTypesExt import *
 
 class TftpServer(TftpSession):
     """This class implements a tftp server object. Run the listen() method to
@@ -32,6 +35,8 @@ class TftpServer(TftpSession):
         self.shutdown_gracefully = False
         self.shutdown_immediately = False
 
+        self.time = None
+
         if self.dyn_file_func:
             if not callable(self.dyn_file_func):
                 raise TftpException, "A dyn_file_func supplied, but it is not callable."
@@ -51,6 +56,58 @@ class TftpServer(TftpSession):
                     log.warning("The tftproot %s is not writable" % self.root)
         else:
             raise TftpException, "The tftproot does not exist."
+
+
+    def nat_listen(self,
+               serverip="",
+               serverport=DEF_TFTP_PORT,
+               timeout=SOCK_TIMEOUT):
+        try:
+            # FIXME - sockets should be non-blocking
+            self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        except socket.error, err:
+            # Reraise it for now.
+            raise
+        log.info("Starting receive loop...")
+        self.time = time.time()
+        while True:
+            log.debug("shutdown_immediately is %s", self.shutdown_immediately)
+            log.debug("shutdown_gracefully is %s", self.shutdown_gracefully)
+            if self.shutdown_immediately:
+                log.warn("Shutting down now. Session count: %d" % len(self.sessions))
+                self.sock.close()
+                for key in self.sessions:
+                    self.sessions[key].end()
+                self.sessions = []
+                break
+
+            elif self.shutdown_gracefully:
+                if not self.sessions:
+                    log.warn("In graceful shutdown mode and all sessions complete.")
+                    self.sock.close()
+                    break
+
+            # Build the inputlist array of sockets to select() on.
+
+            if time.time() - self.time > timeout:
+                heil = TftpPacketHeil()
+                self.sock.sendto(heil.encode().buffer, (serverip, serverport))
+                self.time = time.time()
+            inputlist = []
+            inputlist.append(self.sock)
+            for key in self.sessions:
+                inputlist.append(self.sessions[key].sock)
+
+            # Block until some socket has input on it.
+            log.debug("Performing select on this inputlist: %s", inputlist)
+            readyinput, readyoutput, readyspecial = select.select(inputlist,
+                                                                  [],
+                                                                  [],
+                                                                  SOCK_TIMEOUT)
+
+
+
+
 
     def listen(self,
                listenip="",
@@ -93,6 +150,7 @@ class TftpServer(TftpSession):
                     break
 
             # Build the inputlist array of sockets to select() on.
+
             inputlist = []
             inputlist.append(self.sock)
             for key in self.sessions:

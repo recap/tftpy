@@ -4,6 +4,7 @@ parse() method."""
 
 from TftpShared import *
 from TftpPacketTypes import *
+from TftpPacketTypesExt import *
 
 class TftpPacketFactory(object):
     """This class generates TftpPacket objects. It is responsible for parsing
@@ -16,8 +17,9 @@ class TftpPacketFactory(object):
             3: TftpPacketDAT,
             4: TftpPacketACK,
             5: TftpPacketERR,
-            6: TftpPacketOACK
-            }
+            6: TftpPacketOACK,
+            100: TftpPacketHeil
+        }
 
     def parse(self, buffer):
         """This method is used to parse an existing datagram into its
