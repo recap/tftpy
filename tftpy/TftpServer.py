@@ -12,6 +12,10 @@ from TftpPacketFactory import TftpPacketFactory
 from TftpContexts import TftpContextServer
 from TftpPacketTypesExt import *
 
+class State:
+    IDLE = 1
+    REG  = 2
+
 class TftpServer(TftpSession):
     """This class implements a tftp server object. Run the listen() method to
     listen for client requests.  It takes two optional arguments. tftproot is
@@ -24,6 +28,7 @@ class TftpServer(TftpSession):
         self.listenip = None
         self.listenport = None
         self.sock = None
+        self.state = State.WAIT
         # FIXME: What about multiple roots?
         self.root = os.path.abspath(tftproot)
         self.dyn_file_func = dyn_file_func
@@ -70,6 +75,8 @@ class TftpServer(TftpSession):
         log.info("Starting receive loop...")
         self.last_update = time.time()
         pktFactory = TftpPacketFactory();
+        claddress = None
+        clport = None
         while True:
             log.debug("shutdown_immediately is %s", self.shutdown_immediately)
             log.debug("shutdown_gracefully is %s", self.shutdown_gracefully)
@@ -90,9 +97,15 @@ class TftpServer(TftpSession):
             # Build the inputlist array of sockets to select() on.
 
             if time.time() - self.last_update > timeout:
-                heil = TftpPacketHeil()
-                self.sock.sendto(heil.encode().buffer, (serverip, serverport))
-                self.last_update = time.time()
+                if self.state == State.IDLE:
+                    heil = TftpPacketHeil()
+                    self.sock.sendto(heil.encode().buffer, (serverip, serverport))
+                    self.last_update = time.time()
+                if self.state == State.REG:
+                    heil = TftpPacketHeil()
+                    self.sock.sendto(heil.encode().buffer, (claddress, clport))
+                    self.last_update = time.time()
+
             inputlist = []
             inputlist.append(self.sock)
             for key in self.sessions:
@@ -127,15 +140,25 @@ class TftpServer(TftpSession):
                         pkt = pktFactory.parse(buffer)
                         if pkt.opcode == 101:
                             # Register new client
-
-
-                        log.debug("Creating new server context for "
+                            self.state = State.REG
+                            claddress = raddress
+                            clport = rport
+                            self.last_update = 0.0
+                        if pkt.opcode == 100:
+                            # received 'heil' from other client
+                            log.debug("Creating new server context for "
                                      "session key = %s", key)
-                        self.sessions[key] = TftpContextServer(raddress,
+                            self.sessions[key] = TftpContextServer(raddress,
                                                                rport,
                                                                timeout,
                                                                self.root,
-                                                               self.dyn_file_func)
+                                                               self.dyn_file_func,
+                                                               self.sock)
+                            self.state = State.IDLE
+                            self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                            self.last_update = 0.0
+
+
                         try:
                             self.sessions[key].start(buffer)
                         except TftpException, err:

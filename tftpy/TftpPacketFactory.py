@@ -18,7 +18,8 @@ class TftpPacketFactory(object):
             4: TftpPacketACK,
             5: TftpPacketERR,
             6: TftpPacketOACK,
-            100: TftpPacketHeil
+            100: TftpPacketHeil,
+            101: TftpPacketReg
         }
 
     def parse(self, buffer):
