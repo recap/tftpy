@@ -24,11 +24,12 @@ class TftpServer(TftpSession):
     read from during downloads. This permits the serving of dynamic
     content."""
 
-    def __init__(self, tftproot='/tftpboot', dyn_file_func=None):
+    def __init__(self, tftproot='/tftpboot', servername, dyn_file_func=None):
         self.listenip = None
         self.listenport = None
         self.sock = None
         self.state = State.WAIT
+        self.servername = servername
         # FIXME: What about multiple roots?
         self.root = os.path.abspath(tftproot)
         self.dyn_file_func = dyn_file_func
@@ -69,6 +70,7 @@ class TftpServer(TftpSession):
         try:
             # FIXME - sockets should be non-blocking
             self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self.sock.settimeout(timeout)
         except socket.error, err:
             # Reraise it for now.
             raise
@@ -97,14 +99,12 @@ class TftpServer(TftpSession):
             # Build the inputlist array of sockets to select() on.
 
             if time.time() - self.last_update > timeout:
+                heil = TftpPacketHeil(self.servername)
                 if self.state == State.IDLE:
-                    heil = TftpPacketHeil()
                     self.sock.sendto(heil.encode().buffer, (serverip, serverport))
-                    self.last_update = time.time()
-                if self.state == State.REG:
-                    heil = TftpPacketHeil()
+                else:
                     self.sock.sendto(heil.encode().buffer, (claddress, clport))
-                    self.last_update = time.time()
+                self.last_update = time.time()
 
             inputlist = []
             inputlist.append(self.sock)
@@ -156,21 +156,80 @@ class TftpServer(TftpSession):
                                                                self.sock)
                             self.state = State.IDLE
                             self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                            self.sock.settimeout(timeout)
                             self.last_update = 0.0
-
-
-                        try:
-                            self.sessions[key].start(buffer)
-                        except TftpException, err:
-                            deletion_list.append(key)
-                            log.error("Fatal exception thrown from "
-                                      "session %s: %s" % (key, str(err)))
                     else:
                         log.warn("received traffic on main socket for "
                                  "existing session??")
                     log.info("Currently handling these sessions:")
                     for session_key, session in self.sessions.items():
                         log.info("    %s" % session)
+                else:
+                    # Must find the owner of this traffic.
+                    for key in self.sessions:
+                        if readysock == self.sessions[key].sock:
+                            log.info("Matched input to session key %s"
+                                % key)
+                            try:
+                                self.sessions[key].cycle()
+                                if self.sessions[key].state == None:
+                                    log.info("Successful transfer.")
+                                    deletion_list.append(key)
+                            except TftpException, err:
+                                deletion_list.append(key)
+                                log.error("Fatal exception thrown from "
+                                          "session %s: %s"
+                                          % (key, str(err)))
+                            # Break out of for loop since we found the correct
+                            # session.
+                            break
+
+                    else:
+                        log.error("Can't find the owner for this packet. "
+                                  "Discarding.")
+
+            log.debug("Looping on all sessions to check for timeouts")
+            now = time.time()
+            for key in self.sessions:
+                try:
+                    self.sessions[key].checkTimeout(now)
+                except TftpTimeout, err:
+                    log.error(str(err))
+                    self.sessions[key].retry_count += 1
+                    if self.sessions[key].retry_count >= TIMEOUT_RETRIES:
+                        log.debug("hit max retries on %s, giving up",
+                            self.sessions[key])
+                        deletion_list.append(key)
+                    else:
+                        log.debug("resending on session %s", self.sessions[key])
+                        self.sessions[key].state.resendLast()
+
+            log.debug("Iterating deletion list.")
+            for key in deletion_list:
+                log.info('')
+                log.info("Session %s complete" % key)
+                if self.sessions.has_key(key):
+                    log.debug("Gathering up metrics from session before deleting")
+                    self.sessions[key].end()
+                    metrics = self.sessions[key].metrics
+                    if metrics.duration == 0:
+                        log.info("Duration too short, rate undetermined")
+                    else:
+                        log.info("Transferred %d bytes in %.2f seconds"
+                            % (metrics.bytes, metrics.duration))
+                        log.info("Average rate: %.2f kbps" % metrics.kbps)
+                    log.info("%.2f bytes in resent data" % metrics.resent_bytes)
+                    log.info("%d duplicate packets" % metrics.dupcount)
+                    log.debug("Deleting session %s", key)
+                    del self.sessions[key]
+                    log.debug("Session list is now %s", self.sessions)
+                else:
+                    log.warn("Strange, session %s is not on the deletion list"
+                        % key)
+
+        log.debug("server returning from while loop")
+        self.shutdown_gracefully = self.shutdown_immediately = False
+
 
 
 

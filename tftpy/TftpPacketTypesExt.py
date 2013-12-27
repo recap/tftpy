@@ -13,9 +13,10 @@ class TftpPacketHeil(TftpPacket):
     HEIL  | 100    |
             --------
     """
-    def __init__(self):
+    def __init__(self, name = None):
         TftpPacket.__init__(self)
         self.opcode = 100
+        self.name = name
 
     def __str__(self):
         s = 'HEIL packet'
@@ -24,11 +25,13 @@ class TftpPacketHeil(TftpPacket):
     def encode(self):
         """Encode the HEIL packet. This method populates self.buffer, and
         returns self for easy method chaining."""
-        format = "!H"
-        self.buffer = struct.pack(format, self.opcode)
+        format = "!H%dsx" % len(name)
+        self.buffer = struct.pack(format, self.opcode, self.name)
         return self
 
     def decode(self):
+        format = "!H%dsx" % (len(self.buffer) - 3)
+        self.opcode, self.name = struct.unpack(format, self.buffer)
         return self
 
 
