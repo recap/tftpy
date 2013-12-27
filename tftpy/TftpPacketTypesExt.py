@@ -1,6 +1,7 @@
 """This module implements the packet types of TFTP NAT"""
 
 import socket
+import struct
 from TftpPacketTypes import *
 
 class TftpPacketHeil(TftpPacket):

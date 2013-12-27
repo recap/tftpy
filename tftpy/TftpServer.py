@@ -2,7 +2,6 @@
 instance of the server, and then run the listen() method to listen for client
 requests. Logging is performed via a standard logging object set in
 TftpShared."""
-from datetime import timedelta
 
 import socket, os, time
 import select
@@ -35,7 +34,7 @@ class TftpServer(TftpSession):
         self.shutdown_gracefully = False
         self.shutdown_immediately = False
 
-        self.time = None
+        self.last_update = None
 
         if self.dyn_file_func:
             if not callable(self.dyn_file_func):
@@ -69,7 +68,8 @@ class TftpServer(TftpSession):
             # Reraise it for now.
             raise
         log.info("Starting receive loop...")
-        self.time = time.time()
+        self.last_update = time.time()
+        pktFactory = TftpPacketFactory();
         while True:
             log.debug("shutdown_immediately is %s", self.shutdown_immediately)
             log.debug("shutdown_gracefully is %s", self.shutdown_gracefully)
@@ -89,10 +89,10 @@ class TftpServer(TftpSession):
 
             # Build the inputlist array of sockets to select() on.
 
-            if time.time() - self.time > timeout:
+            if time.time() - self.last_update > timeout:
                 heil = TftpPacketHeil()
                 self.sock.sendto(heil.encode().buffer, (serverip, serverport))
-                self.time = time.time()
+                self.last_update = time.time()
             inputlist = []
             inputlist.append(self.sock)
             for key in self.sessions:
@@ -104,6 +104,50 @@ class TftpServer(TftpSession):
                                                                   [],
                                                                   [],
                                                                   SOCK_TIMEOUT)
+            deletion_list = []
+
+            # Handle the available data, if any. Maybe we timed-out.
+            for readysock in readyinput:
+                # Is the traffic on the main server socket? ie. new session?
+                if readysock == self.sock:
+                    log.debug("Data ready on our main socket")
+                    buffer, (raddress, rport) = self.sock.recvfrom(MAX_BLKSIZE)
+
+                    log.debug("Read %d bytes", len(buffer))
+
+                    if self.shutdown_gracefully:
+                        log.warn("Discarding data on main port, in graceful shutdown mode")
+                        continue
+
+                    # Forge a session key based on the client's IP and port,
+                    # which should safely work through NAT.
+                    key = "%s:%s" % (raddress, rport)
+
+                    if not self.sessions.has_key(key):
+                        pkt = pktFactory.parse(buffer)
+                        if pkt.opcode == 101:
+                            # Register new client
+
+
+                        log.debug("Creating new server context for "
+                                     "session key = %s", key)
+                        self.sessions[key] = TftpContextServer(raddress,
+                                                               rport,
+                                                               timeout,
+                                                               self.root,
+                                                               self.dyn_file_func)
+                        try:
+                            self.sessions[key].start(buffer)
+                        except TftpException, err:
+                            deletion_list.append(key)
+                            log.error("Fatal exception thrown from "
+                                      "session %s: %s" % (key, str(err)))
+                    else:
+                        log.warn("received traffic on main socket for "
+                                 "existing session??")
+                    log.info("Currently handling these sessions:")
+                    for session_key, session in self.sessions.items():
+                        log.info("    %s" % session)
 
 
 
