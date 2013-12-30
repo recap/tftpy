@@ -44,19 +44,24 @@ class TftpPacketReg(TftpPacket):
     Reg  | 101    |
             --------
     """
-    def __init__(self):
+    def __init__(self, addr=None, port=None):
         TftpPacket.__init__(self)
         self.opcode = 101
-        hostname = None
-        port = None
+        self.addr = addr
+        self.port = port
 
     def __str__(self):
         s = 'Reg packet from: %s:%d' % (self.hostname, self.port)
         return s
 
     def encode(self):
-        self.buffer=self.hostname + ':' + self.port
+        self.buffer = struct.pack("!H", self.opcode) + socket.inet_aton(self.addr) + struct.pack("!H", self.port)
         return self;
 
-
+    def decode(self):
+        if len(self.buffer) != 8:
+        	raise ValueError, "invalid bytes"
+    	host = socket.inet_ntoa( self.buffer[2:6] )
+    	port, = struct.unpack( "!H", self.buffer[-2:] )
+        return self
 

@@ -141,8 +141,8 @@ class TftpServer(TftpSession):
                         if pkt.opcode == 101:
                             # Register new client
                             self.state = State.REG
-                            claddress = raddress
-                            clport = rport
+                            claddress = pkt.addr
+                            clport = pkt.port
                             self.last_update = 0.0
                         if pkt.opcode == 100:
                             # received 'heil' from other client
